@@ -1,8 +1,7 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*
 
-import cfg_8583
-import deal_8583
+from iso import cfg_8583, deal_8583
 import re
 
 class iso_8583:
@@ -10,6 +9,7 @@ class iso_8583:
     __8583_head_cfg=None
     __8583_str=""
     __8583_dic={}
+    __charset="UTF-8"
     
     offset = 0
     bitmap = None
@@ -17,19 +17,23 @@ class iso_8583:
     __deal_content_type_funcs=None
     __deal_len_type_funcs=None
     
-    def __init__(self,iso_head_conf = None, iso_conf = None,iso_str = None):
-        
+    def __init__(self,iso_head_conf = None, iso_conf = None,iso_str = None,charset="UTF-8"):
+        self.__8583_cfg = None
+        self.__8583_head_cfg = None
+        self.__8583_str = ""
+        self.__8583_dic = {}
+        self.__charset = charset
         #tips:iso_conf为空，或者配置错误，劳资都是木有办法玩的。
         assert iso_conf != None,"iso_conf can not None"
         assert len(cfg_8583.ContentTypes) > 0 , "cfg_8583 err "  
-        assert cfg_8583.ContentTypes.has_key(iso_conf),"iso_conf not in cfg_8583"  
+        assert iso_conf in cfg_8583.ContentTypes, "iso_conf not in cfg_8583"
             
-        self.__deal_content_type_funcs=deal_8583.deal_content_type()
-        self.__deal_len_type_funcs=deal_8583.deal_len_type()
+        self.__deal_content_type_funcs= deal_8583.deal_content_type(self.__charset)
+        self.__deal_len_type_funcs= deal_8583.deal_len_type(self.__charset)
         self.__8583_cfg = cfg_8583.ContentTypes[iso_conf]
         
         if iso_head_conf != None:
-            assert cfg_8583.ContentTypes.has_key(iso_head_conf),"iso_head_conf not in cfg_8583" 
+            assert iso_head_conf in cfg_8583.ContentTypes, "iso_head_conf not in cfg_8583"
             self.__8583_head_cfg = cfg_8583.ContentTypes[iso_head_conf]
         
         if iso_str != None:
@@ -53,7 +57,7 @@ class iso_8583:
     def __gen_bitmap(self):
         bitmap_list = [key for key in self.__8583_dic if key > 1]
         
-        if self.__8583_head_cfg[-2].has_key("bitmap") and self.__8583_head_cfg[-2]["bitmap"] == 1:
+        if "bitmap" in self.__8583_head_cfg[-2] and self.__8583_head_cfg[-2]["bitmap"] == 1:
             bitmap="1" + "0"*(self.__8583_head_cfg[-2]["max_len"] - 1)
         else:
             bitmap="0"*(self.__8583_head_cfg[-2]["max_len"])
@@ -66,7 +70,7 @@ class iso_8583:
         return self.bitmap
     
     def __get_info(self,cfg,domain):
-        if cfg.has_key(domain):
+        if domain in cfg:
             cfg_domain=cfg[domain]
             
             len_func_name="%s_unpack" % cfg_domain["len_type"]
@@ -74,27 +78,27 @@ class iso_8583:
             content_type_func_name="%s_unpack" % cfg_domain["content_type"]
             content_type_func = getattr(self.__deal_content_type_funcs, content_type_func_name)
             
-            len,offset_len=len_func(cfg_domain,self.__8583_str,self.offset)  
+            len,offset_len=len_func(cfg_domain,self.__8583_str,self.offset,str(domain))
             self.offset += offset_len
-            
-            val,offset_data=content_type_func(self.__8583_str,len,self.offset)  
+            val,offset_data=content_type_func(self.__8583_str,len,self.offset)
             self.offset += offset_data
             self.__8583_dic[domain] = val
+            # print(domain,len,val)
     
     def __unpack_head(self):
         for domain in range(-6,0):
             self.__get_info(self.__8583_head_cfg,domain)
-
         self.bitmap = self.__8583_dic[-2]
+
     def __unpack_body(self):
         bitmap_list = self.__gen_bitmap_list()
-        print "get bitmap list succ %s" % bitmap_list
+        print("get bitmap list succ %s" % bitmap_list)
         
         for domain in bitmap_list:
             self.__get_info(self.__8583_cfg,domain)
 
     def unpack(self):
-        self.__unpack_head()    
+        self.__unpack_head()
         self.__unpack_body()
         return self.__8583_dic
     
@@ -103,7 +107,7 @@ class iso_8583:
         self.__8583_dic[t] = v
     
     def __gen_info(self,cfg,domain):
-        if cfg.has_key(domain) :
+        if domain in cfg :
             cfg_domain=cfg[domain]
             data = self.__8583_dic[domain]
             
@@ -113,8 +117,10 @@ class iso_8583:
             content_type_func = getattr(self.__deal_content_type_funcs, content_type_func_name)
             
             info={}
-            info["len"]=len_func(cfg_domain,data)
-            info["val"]=content_type_func(data)  
+            info["len"]=len_func(cfg_domain,data,str(domain))
+            info["val"]=content_type_func(data)
+            # print(cfg_domain)
+            # print(domain,info["len"] , info["val"])
             return info["len"] + info["val"]
         else:
             return ""
@@ -144,22 +150,24 @@ class iso_8583:
         
         body = "".join(list)
         body_len = ""
-        if self.__8583_head_cfg[-6].has_key('self_len') and self.__8583_head_cfg[-6]['self_len']==1:
-            body_len = "%04X" % ((len(body)/2) + 2)
+        if 'self_len' in self.__8583_head_cfg[-6] and self.__8583_head_cfg[-6]['self_len']==1:
+            body_len = "%04X" % (int(len(body)/2) + 2)
         else:
-            body_len = "%04X" % ((len(body)/2))
+            body_len = "%04X" % (int(len(body)/2))
         return (body_len + body).upper()
   
     def ISO8583_testOutput(self):  
-        cfg = dict(self.__8583_head_cfg , **self.__8583_cfg)
+        cfg = {}
+        cfg.update(self.__8583_head_cfg)
+        cfg.update(self.__8583_cfg)
         for d in range(-6,128+1):
-            if self.__8583_dic.has_key(d):
-                print "[%2s] [%08s] [%08s] [%03s] : %s" % \
+            if d in self.__8583_dic:
+                print("[%2s] [%08s] [%08s] [%03s] : %s" % \
                 (
                  d,
                  cfg[d]["content_type"],
                  cfg[d]["len_type"],
                  cfg[d]["max_len"],
                  self.__8583_dic[d]
-                 )
+                 ))
             
